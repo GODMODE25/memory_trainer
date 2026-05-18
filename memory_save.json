@@ -1,0 +1,23 @@
+{
+  "high_scores": [],
+  "stats": {
+    "games_played": 6,
+    "correct": 6,
+    "wrong": 6,
+    "best_streak": 2,
+    "best_level": 1,
+    "total_score": 450
+  },
+  "practice_stats": {
+    "attempts": 9,
+    "correct": 7,
+    "best_streak": 5,
+    "techniques_used": {
+      "Chunking": 8,
+      "Story Link": 1
+    }
+  },
+  "achievements": [
+    "first_correct"
+  ]
+}
