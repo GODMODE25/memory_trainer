@@ -61,9 +61,9 @@ WORD_BANK = [
 ]
 
 ACHIEVEMENTS = [
-    {"id": "first_correct", "name": "First Spark", "description": "Recall one challenge.", "predicate": "correct>=1"},
-    {"id": "streak_5", "name": "Hot Streak", "description": "Reach a 5-round streak.", "predicate": "streak>=5"},
-    {"id": "score_1000", "name": "Four Digits", "description": "Score 1000 points.", "predicate": "score>=1000"},
-    {"id": "level_10", "name": "Climber", "description": "Reach level 10.", "predicate": "level>=10"},
-    {"id": "insane_perfect", "name": "Steel Nerves", "description": "Get an Insane round right without hints.", "predicate": "perfect_round_insane"},
+    {"id": "first_correct", "name": "First Spark", "description": "Recall one challenge.", "icon": "💡", "predicate": "correct>=1"},
+    {"id": "streak_5", "name": "Hot Streak", "description": "Reach a 5-round streak.", "icon": "🔥", "predicate": "streak>=5"},
+    {"id": "score_1000", "name": "Four Digits", "description": "Score 1000 points.", "icon": "💎", "predicate": "score>=1000"},
+    {"id": "level_10", "name": "Climber", "description": "Reach level 10.", "icon": "🧗", "predicate": "level>=10"},
+    {"id": "insane_perfect", "name": "Steel Nerves", "description": "Get an Insane round right without hints.", "icon": "🦾", "predicate": "perfect_round_insane"},
 ]

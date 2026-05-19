@@ -1,94 +1,40 @@
 import customtkinter as ctk
 import datetime
-import json
 import os
 import random
 import string
 import time
 
-
 from memory_data import *
-
-
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
-
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_config(config):
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config, f, indent=2)
-    except:
-        pass
-
-
-def default_save():
-    return {
-        "high_scores": [],
-        "stats": {
-            "games_played": 0,
-            "correct": 0,
-            "wrong": 0,
-            "best_streak": 0,
-            "best_level": 0,
-            "total_score": 0,
-        },
-        "practice_stats": {
-            "attempts": 0,
-            "correct": 0,
-            "best_streak": 0,
-            "techniques_used": {},
-            "total_memorize_time": 0.0,
-        },
-        "achievements": [],
-        "daily_streak": 0,
-        "last_played_date": "",
-        "daily_quest": {
-            "type": "Numbers",
-            "target": 5,
-            "current": 0,
-            "completed": False,
-            "date": ""
-        }
-    }
-
-
-def load_save(username="DefaultUser"):
-    filename = os.path.join(os.path.dirname(__file__), f"memory_save_{username}.json")
-    data = default_save()
-    try:
-        with open(filename, "r", encoding="utf-8") as save_file:
-            loaded = json.load(save_file)
-        if isinstance(loaded, dict):
-            data["high_scores"] = loaded.get("high_scores", [])
-            data["stats"].update(loaded.get("stats", {}))
-            data["practice_stats"].update(loaded.get("practice_stats", {}))
-            data["achievements"] = loaded.get("achievements", [])
-            data["daily_streak"] = loaded.get("daily_streak", 0)
-            data["last_played_date"] = loaded.get("last_played_date", "")
-            data["daily_quest"] = loaded.get("daily_quest", data["daily_quest"])
-    except (OSError, json.JSONDecodeError, TypeError):
-        return default_save()
-    return data
-
-
-def save_save(data, username="DefaultUser"):
-    filename = os.path.join(os.path.dirname(__file__), f"memory_save_{username}.json")
-    try:
-        with open(filename, "w", encoding="utf-8") as save_file:
-            json.dump(data, save_file, indent=2)
-    except OSError:
-        pass
+from memory_utils import (
+    load_config,
+    save_config,
+    load_save,
+    save_save,
+    get_save_path,
+    get_emoji_image,
+    default_save,
+)
+from memory_engine import (
+    compute_length,
+    generate_challenge,
+    normalize_compare,
+    compute_score_gain,
+    calculate_account_level,
+)
+from memory_auth import AuthWindow
+from memory_achievements import AchievementsWindow
 
 
 class MemoryApp(ctk.CTk):
+    @property
+    def account_level(self):
+        try:
+            total_score = self.save_data.get("stats", {}).get("total_score", 0) + getattr(self, "score", 0)
+            return calculate_account_level(total_score)
+        except AttributeError:
+            return 1
+
     def __init__(self):
         super().__init__()
 
@@ -109,6 +55,11 @@ class MemoryApp(ctk.CTk):
         self.narrow_layout = None
         self.resize_after_id = None
         self.username = "DefaultUser" # Fallback
+        self.icon_cache = {}
+        self._prefetch_completed = False
+        import threading
+        threading.Thread(target=self._prefetch_icons, daemon=True).start()
+        self.after(200, self._check_prefetch_done)
 
         # Check for remembered user
         config = load_config()
@@ -124,7 +75,7 @@ class MemoryApp(ctk.CTk):
 
         self._build_ui()
         
-        if remembered and os.path.exists(os.path.join(os.path.dirname(__file__), f"memory_save_{remembered}.json")):
+        if remembered and os.path.exists(get_save_path(remembered)):
             self.username = remembered
             self.save_data = load_save(self.username)
             self._on_login_success()
@@ -136,71 +87,72 @@ class MemoryApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _show_auth_screen(self):
-        self.withdraw()
-        
-        auth_win = ctk.CTkToplevel(self)
-        auth_win.title("Login / Register")
-        auth_win.geometry("350x300")
-        auth_win.resizable(False, False)
-        auth_win.attributes("-topmost", True)
-        
-        ctk.CTkLabel(auth_win, text="Memory Trainer Quest", font=ctk.CTkFont(family="Impact", size=24)).pack(pady=20)
-        
-        username_entry = ctk.CTkEntry(auth_win, placeholder_text="Username", width=200)
-        username_entry.pack(pady=10)
-        
-        error_label = ctk.CTkLabel(auth_win, text="", text_color="#ff5555")
-        error_label.pack(pady=5)
-        
-        remember_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(auth_win, text="Remember me", variable=remember_var).pack(pady=5)
-        
-        def attempt_login():
-            user = username_entry.get().strip()
-            if not user:
-                error_label.configure(text="Username cannot be empty")
-                return
-            filename = os.path.join(os.path.dirname(__file__), f"memory_save_{user}.json")
-            if os.path.exists(filename):
-                complete_login(user)
-            else:
-                error_label.configure(text="User not found. Please register.")
-                
-        def attempt_register():
-            user = username_entry.get().strip()
-            if not user:
-                error_label.configure(text="Username cannot be empty")
-                return
-            filename = os.path.join(os.path.dirname(__file__), f"memory_save_{user}.json")
-            if os.path.exists(filename):
-                error_label.configure(text="Username taken. Choose another.")
-            else:
-                save_save(default_save(), user)
-                complete_login(user)
-                
-        def complete_login(user):
-            self.username = user
-            self.save_data = load_save(user)
-            if remember_var.get():
-                save_config({"remembered_user": user})
-            else:
-                save_config({})
-            auth_win.destroy()
-            self.deiconify()
+        def on_auth_success(username, save_data):
+            self.username = username
+            self.save_data = save_data
             self._on_login_success()
             
-        btn_frame = ctk.CTkFrame(auth_win, fg_color="transparent")
-        btn_frame.pack(pady=20)
-        
-        ctk.CTkButton(btn_frame, text="Login", command=attempt_login, width=90).pack(side="left", padx=5)
-        ctk.CTkButton(btn_frame, text="Register", command=attempt_register, width=90).pack(side="left", padx=5)
+        AuthWindow(self, on_auth_success)
 
     def _on_login_success(self):
         self._reset_run_state()
         self._check_daily_streak(check_only=True)
         self._check_daily_quest()
+        self._load_user_settings()
         self._refresh_hud()
         self.title(f"{APP_TITLE} - Logged in as {self.username}")
+
+    def _load_user_settings(self):
+        config = load_config()
+        user_key = f"settings_{self.username}"
+        settings = config.get(user_key) or config.get("last_settings")
+        if settings:
+            if "session_type" in settings:
+                self.session_type_var.set(settings["session_type"])
+            if "mode" in settings:
+                self.mode_var.set(settings["mode"])
+            if "difficulty" in settings:
+                self.difficulty_var.set(settings["difficulty"])
+            if "theme" in settings:
+                theme = settings["theme"]
+                self.theme_var.set(theme)
+                ctk.set_appearance_mode(theme)
+            if "technique" in settings:
+                self.technique_var.set(settings["technique"])
+            if "assist" in settings:
+                self.assist_var.set(settings["assist"])
+            if "timer" in settings:
+                self.timer_var.set(settings["timer"])
+            
+            # Sync sliders to match loaded difficulty/session settings
+            if self.is_practice_mode():
+                self.display_slider.set(max(self.display_slider.get(), 5.0))
+                self.recall_slider.set(max(self.recall_slider.get(), 15.0))
+            else:
+                cfg = self._difficulty_config()
+                self.display_slider.set(cfg["display"])
+                self.recall_slider.set(cfg["recall"])
+            self.update_display_label(self.display_slider.get())
+            self.update_recall_label(self.recall_slider.get())
+            self.reset_game()
+
+    def _save_user_settings(self):
+        if not self.username or self.username == "DefaultUser":
+            return
+        config = load_config()
+        user_key = f"settings_{self.username}"
+        settings = {
+            "session_type": self.session_type_var.get(),
+            "mode": self.mode_var.get(),
+            "difficulty": self.difficulty_var.get(),
+            "theme": self.theme_var.get(),
+            "technique": self.technique_var.get(),
+            "assist": self.assist_var.get(),
+            "timer": self.timer_var.get(),
+        }
+        config[user_key] = settings
+        config["last_settings"] = settings
+        save_config(config)
 
     def _on_logout(self):
         save_config({})
@@ -391,23 +343,24 @@ class MemoryApp(ctk.CTk):
         self.game_sidebar.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(self.game_sidebar, text="HUD", font=ctk.CTkFont(size=18, weight="bold"), text_color=HEADER_COLOR).grid(row=0, column=0, padx=14, pady=(16, 8), sticky="w")
-        self.score_label = ctk.CTkLabel(self.game_sidebar, text="")
-        self.level_label = ctk.CTkLabel(self.game_sidebar, text="")
-        self.lives_label = ctk.CTkLabel(self.game_sidebar, text="")
-        self.streak_label = ctk.CTkLabel(self.game_sidebar, text="")
-        self.round_label = ctk.CTkLabel(self.game_sidebar, text="")
-        self.accuracy_label = ctk.CTkLabel(self.game_sidebar, text="")
-        self.best_label = ctk.CTkLabel(self.game_sidebar, text="")
-        for row, label in enumerate([self.score_label, self.level_label, self.lives_label, self.streak_label, self.round_label, self.accuracy_label, self.best_label], start=1):
+        hud_font = ctk.CTkFont(size=14, weight="bold")
+        self.score_label = ctk.CTkLabel(self.game_sidebar, text="", font=hud_font, text_color="#f59e0b")
+        self.account_level_label = ctk.CTkLabel(self.game_sidebar, text="", font=hud_font, text_color="#38bdf8")
+        self.level_label = ctk.CTkLabel(self.game_sidebar, text="", font=hud_font, text_color="#a78bfa")
+        self.lives_label = ctk.CTkLabel(self.game_sidebar, text="", font=hud_font, text_color="#f43f5e")
+        self.streak_label = ctk.CTkLabel(self.game_sidebar, text="", font=hud_font, text_color="#fdba74")
+        self.round_label = ctk.CTkLabel(self.game_sidebar, text="", font=hud_font, text_color="#94a3b8")
+        self.accuracy_label = ctk.CTkLabel(self.game_sidebar, text="", font=hud_font, text_color="#34d399")
+        self.best_label = ctk.CTkLabel(self.game_sidebar, text="", font=hud_font, text_color="#fbbf24")
+        for row, label in enumerate([self.score_label, self.account_level_label, self.level_label, self.lives_label, self.streak_label, self.round_label, self.accuracy_label, self.best_label], start=1):
             label.grid(row=row, column=0, padx=14, pady=2, sticky="w")
 
-        ctk.CTkLabel(self.game_sidebar, text="Top 5", font=ctk.CTkFont(size=15, weight="bold"), text_color=SUBHEADER_COLOR).grid(row=8, column=0, padx=14, pady=(14, 4), sticky="w")
+        ctk.CTkLabel(self.game_sidebar, text="Top 5 🏆", font=ctk.CTkFont(size=15, weight="bold"), text_color=SUBHEADER_COLOR).grid(row=9, column=0, padx=14, pady=(14, 4), sticky="w")
         self.high_scores_frame = ctk.CTkFrame(self.game_sidebar, fg_color="transparent")
-        self.high_scores_frame.grid(row=9, column=0, padx=14, sticky="ew")
+        self.high_scores_frame.grid(row=10, column=0, padx=14, sticky="ew")
 
-        ctk.CTkLabel(self.game_sidebar, text="Achievements", font=ctk.CTkFont(size=15, weight="bold"), text_color=SUBHEADER_COLOR).grid(row=10, column=0, padx=14, pady=(16, 4), sticky="w")
-        self.achievements_frame = ctk.CTkFrame(self.game_sidebar, fg_color="transparent")
-        self.achievements_frame.grid(row=11, column=0, padx=14, sticky="ew")
+        self.achievements_button = ctk.CTkButton(self.game_sidebar, text="Achievements 🏆", command=self.show_achievements, font=ctk.CTkFont(weight="bold"))
+        self.achievements_button.grid(row=11, column=0, padx=14, pady=(16, 10), sticky="ew")
 
         self.quest_frame = ctk.CTkFrame(self.game_sidebar, fg_color="transparent")
         self.quest_frame.grid(row=12, column=0, padx=14, sticky="ew")
@@ -426,8 +379,37 @@ class MemoryApp(ctk.CTk):
         self.coach_example_label.grid(row=5, column=0, padx=14, pady=4, sticky="ew")
         self.coach_review_label = ctk.CTkLabel(self.coach_sidebar, text="", wraplength=210, justify="left", anchor="w")
         self.coach_review_label.grid(row=6, column=0, padx=14, pady=(10, 4), sticky="ew")
-        self.practice_stats_label = ctk.CTkLabel(self.coach_sidebar, text="", wraplength=210, justify="left", anchor="w")
-        self.practice_stats_label.grid(row=7, column=0, padx=14, pady=(14, 4), sticky="ew")
+        hud_font = ctk.CTkFont(size=14, weight="bold")
+        self.practice_attempts_label = ctk.CTkLabel(self.coach_sidebar, text="", font=hud_font, text_color="#f59e0b")
+        self.practice_correct_label = ctk.CTkLabel(self.coach_sidebar, text="", font=hud_font, text_color="#34d399")
+        self.practice_accuracy_label = ctk.CTkLabel(self.coach_sidebar, text="", font=hud_font, text_color="#a78bfa")
+        self.practice_best_streak_label = ctk.CTkLabel(self.coach_sidebar, text="", font=hud_font, text_color="#fdba74")
+        self.practice_time_label = ctk.CTkLabel(self.coach_sidebar, text="", font=hud_font, text_color="#38bdf8")
+
+        for row, label in enumerate([self.practice_attempts_label, self.practice_correct_label, self.practice_accuracy_label, self.practice_best_streak_label, self.practice_time_label], start=7):
+            label.grid(row=row, column=0, padx=14, pady=2, sticky="w")
+
+    def _get_icon_image(self, emoji_char, size=(20, 20)):
+        cache_key = (emoji_char, size)
+        if cache_key in self.icon_cache:
+            return self.icon_cache[cache_key]
+            
+        img = get_emoji_image(emoji_char, size)
+        if img:
+            self.icon_cache[cache_key] = img
+        return img
+
+    def _prefetch_icons(self):
+        icons_to_fetch = ["🎯", "⭐", "📈", "💖", "🔥", "🔄", "📊", "⚡", "📜", "🎉", "💡", "💎", "🧗", "🦾", "🔒", "✅", "⏱"]
+        for icon in icons_to_fetch:
+            get_emoji_image(icon)
+        self._prefetch_completed = True
+
+    def _check_prefetch_done(self):
+        if self._prefetch_completed:
+            self._refresh_hud()
+        else:
+            self.after(200, self._check_prefetch_done)
 
     def _difficulty_config(self):
         return DIFFICULTIES[self.difficulty_var.get()]
@@ -442,7 +424,7 @@ class MemoryApp(ctk.CTk):
         title_lbl = ctk.CTkLabel(popup, text="Memory Trainer Quest", font=ctk.CTkFont(size=20, weight="bold"), text_color=HEADER_COLOR)
         title_lbl.pack(padx=20, pady=(20, 10))
         
-        desc_lbl = ctk.CTkLabel(popup, text="A tool to train your memory using various techniques like Chunking, Story Link, and Memory Palace.\n\nBuilt with CustomTkinter.\n\nSamuel Musa (c) 2026", wraplength=350, justify="left")
+        desc_lbl = ctk.CTkLabel(popup, text="A tool to train your memory using various techniques like Chunking, Story Link, and Memory Palace.\n\nVersion 2.0.0 (Modular Edition)\n\nBuilt with CustomTkinter.\n\nSamuel Musa (c) 2026", wraplength=350, justify="left")
         desc_lbl.pack(padx=20, pady=10)
         
         close_btn = ctk.CTkButton(popup, text="Close", command=popup.destroy)
@@ -509,7 +491,7 @@ class MemoryApp(ctk.CTk):
         self.result_label.configure(wraplength=challenge_wrap)
         if hasattr(self, "challenge_label"):
             self.challenge_label.configure(wraplength=challenge_wrap)
-        for label in (self.coach_instruction_label, self.coach_example_label, self.coach_review_label, self.practice_stats_label):
+        for label in (self.coach_instruction_label, self.coach_example_label, self.coach_review_label):
             label.configure(wraplength=sidebar_wrap)
         if self.current_challenge and self.game_state in ("showing", "idle"):
             self._redraw_current_challenge()
@@ -617,25 +599,6 @@ class MemoryApp(ctk.CTk):
 
     def update_recall_label(self, value):
         self.recall_label.configure(text=f"Recall time: {float(value):.1f}s")
-
-    def compute_length(self, level, difficulty):
-        config = DIFFICULTIES[difficulty]
-        return config["start"] + ((level - 1) // 2) * config["growth"]
-
-    def generate_challenge(self, mode, length):
-        if mode == "Numbers":
-            return "".join(random.choice(string.digits) for _ in range(length))
-        if mode == "Phone":
-            prefix = random.choice(["070", "080", "081", "090", "091"])
-            return prefix + "".join(random.choice(string.digits) for _ in range(8))
-        if mode == "Alphanumeric":
-            pool = string.ascii_uppercase + string.digits
-            return "".join(random.choice(pool) for _ in range(length))
-        if mode == "Words":
-            count = max(2, min(6, length // 2))
-            return " ".join(random.choice(WORD_BANK) for _ in range(count))
-        pool = string.ascii_uppercase[:6] + string.digits
-        return ", ".join(random.choice(pool) for _ in range(length))
 
     def _display_text(self, challenge):
         if self.mode_var.get() in ("Numbers", "Phone", "Alphanumeric"):
@@ -812,7 +775,8 @@ class MemoryApp(ctk.CTk):
         self.skip_button.configure(state="disabled")
         self.game_state = "idle"
 
-        correct = not force_wrong and user_input == answer
+        mode = self.mode_var.get()
+        correct = not force_wrong and normalize_compare(mode, user_input, answer)
         if correct:
             self.apply_correct(time_left)
         else:
@@ -829,14 +793,6 @@ class MemoryApp(ctk.CTk):
             self.check_achievements()
         self._refresh_hud()
 
-    def compute_score_gain(self, length, time_left, hints_used):
-        config = self._difficulty_config()
-        streak_bonus = 1 + (self.streak // 3)
-        base = length * 10 * config["mult"] * streak_bonus
-        time_bonus = base * 0.5 * (time_left / max(1, self.recall_slider.get()))
-        penalty = hints_used * 25
-        return max(5, int(base + time_bonus - penalty))
-
     def apply_correct(self, time_left):
         length = len(self.current_challenge.replace(" ", "").replace(",", ""))
         self.correct_count += 1
@@ -850,7 +806,7 @@ class MemoryApp(ctk.CTk):
             self._track_practice_technique()
             self.result_label.configure(text="Correct. Nice method work.", text_color="#33cc66")
         else:
-            gain = self.compute_score_gain(length, time_left, self.hints_used)
+            gain = compute_score_gain(length, time_left, self.hints_used, self.streak, self.difficulty_var.get(), self.recall_slider.get())
             self.score += gain
             self.combo_multiplier = 1 + (self.streak // 3)
             previous_level = self.level
@@ -1006,7 +962,7 @@ class MemoryApp(ctk.CTk):
         self.start_button.configure(text="Start", state="normal", command=self.start_game)
         self.hint_button.configure(text="Coach Hint" if self.is_practice_mode() else "Hint", state="disabled")
         self.skip_button.configure(state="disabled")
-        self.save_data = load_save()
+        self.save_data = load_save(self.username)
         if self.is_practice_mode():
             self.update_coach_panel("idle")
         self._refresh_hud()
@@ -1061,11 +1017,53 @@ class MemoryApp(ctk.CTk):
             best = max(persisted.get("best_streak", 0), self.practice_best_streak)
             total_time = persisted.get("total_memorize_time", 0.0) + self.practice_total_memorize_time
             avg_time = total_time / total_attempts if total_attempts else 0.0
-            self.top_high_score_label.configure(text=f"Practice: {correct}/{attempts}")
-            self.top_streak_label.configure(text=f"Daily Streak: {self.save_data.get('daily_streak', 0)}")
-            self.practice_stats_label.configure(
-                text=f"Practice attempts: {total_attempts}\nPractice correct: {total_correct}\nPractice accuracy: {accuracy}%\nBest practice streak: {best}\nAvg memorize time: {avg_time:.1f}s"
-            )
+            
+            img_practice = self._get_icon_image("🎮")
+            if img_practice:
+                self.top_high_score_label.configure(text=f" Practice: {correct}/{attempts}", image=img_practice, compound="left")
+            else:
+                self.top_high_score_label.configure(text=f"Practice 🎮: {correct}/{attempts}", image="")
+                
+            img_streak = self._get_icon_image("🔥")
+            if img_streak:
+                self.top_streak_label.configure(text=f" Daily Streak: {self.save_data.get('daily_streak', 0)}", image=img_streak, compound="left")
+            else:
+                self.top_streak_label.configure(text=f"Daily Streak 🔥: {self.save_data.get('daily_streak', 0)}", image="")
+
+            # Attempts
+            img_attempts = self._get_icon_image("🎯")
+            if img_attempts:
+                self.practice_attempts_label.configure(text=f" Practice attempts: {total_attempts}", image=img_attempts, compound="left")
+            else:
+                self.practice_attempts_label.configure(text=f"Practice attempts 🎯: {total_attempts}", image="")
+
+            # Correct
+            img_correct = self._get_icon_image("✅")
+            if img_correct:
+                self.practice_correct_label.configure(text=f" Practice correct: {total_correct}", image=img_correct, compound="left")
+            else:
+                self.practice_correct_label.configure(text=f"Practice correct ✅: {total_correct}", image="")
+
+            # Accuracy
+            img_accuracy = self._get_icon_image("📊")
+            if img_accuracy:
+                self.practice_accuracy_label.configure(text=f" Practice accuracy: {accuracy}%", image=img_accuracy, compound="left")
+            else:
+                self.practice_accuracy_label.configure(text=f"Practice accuracy 📊: {accuracy}%", image="")
+
+            # Best Streak
+            img_best = self._get_icon_image("🔥")
+            if img_best:
+                self.practice_best_streak_label.configure(text=f" Best practice streak: {best}", image=img_best, compound="left")
+            else:
+                self.practice_best_streak_label.configure(text=f"Best practice streak 🔥: {best}", image="")
+
+            # Average Time
+            img_time = self._get_icon_image("⏱")
+            if img_time:
+                self.practice_time_label.configure(text=f" Avg memorize time: {avg_time:.1f}s", image=img_time, compound="left")
+            else:
+                self.practice_time_label.configure(text=f"Avg memorize time ⏱: {avg_time:.1f}s", image="")
             return
 
         self.coach_sidebar.grid_remove()
@@ -1074,26 +1072,88 @@ class MemoryApp(ctk.CTk):
         best_score = max([self.score] + [item.get("score", 0) for item in high_scores])
         total_rounds = self.correct_count + self.wrong_count
         accuracy = int((self.correct_count / total_rounds) * 100) if total_rounds else 0
-        hearts = " ".join("♥" for _ in range(max(0, self.lives))) or "None"
+        hearts = " ".join("❤️" for _ in range(max(0, self.lives))) or "None 💔"
 
         # Update quest display
         for child in self.quest_frame.winfo_children():
             child.destroy()
         quest = self.save_data.get("daily_quest", {})
+        quest_icon = "🎉" if quest.get("completed") else "📜"
         quest_text = f"Daily Quest: {quest.get('type')} {quest.get('current')}/{quest.get('target')}"
         if quest.get("completed"):
             quest_text += " (Done)"
-        ctk.CTkLabel(self.quest_frame, text=quest_text, font=ctk.CTkFont(size=14, weight="bold"), text_color=SUBHEADER_COLOR).grid(row=0, column=0, sticky="w")
+            
+        img_quest = self._get_icon_image(quest_icon)
+        if img_quest:
+            lbl = ctk.CTkLabel(self.quest_frame, text=" " + quest_text, font=ctk.CTkFont(size=14, weight="bold"), text_color=SUBHEADER_COLOR, image=img_quest, compound="left")
+        else:
+            fallback_text = f"Daily Quest {quest_icon}: {quest.get('type')} {quest.get('current')}/{quest.get('target')}"
+            if quest.get("completed"):
+                fallback_text += " (Done 🎉)"
+            lbl = ctk.CTkLabel(self.quest_frame, text=fallback_text, font=ctk.CTkFont(size=14, weight="bold"), text_color=SUBHEADER_COLOR)
+        lbl.grid(row=0, column=0, sticky="w")
 
-        self.top_high_score_label.configure(text=f"High Score: {best_score}")
-        self.top_streak_label.configure(text=f"Daily Streak: {self.save_data.get('daily_streak', 0)}")
-        self.score_label.configure(text=f"Score: {self.score}")
-        self.level_label.configure(text=f"Level: {self.level}")
-        self.lives_label.configure(text=f"Lives: {hearts}")
-        self.streak_label.configure(text=f"Streak: {self.streak}   x{self.combo_multiplier}")
-        self.round_label.configure(text=f"Round: {self.round_no}")
-        self.accuracy_label.configure(text=f"Accuracy: {accuracy}%")
-        self.best_label.configure(text=f"Best Streak: {self.best_streak}")
+        # Top bars
+        img_high = self._get_icon_image("🏆")
+        if img_high:
+            self.top_high_score_label.configure(text=f" High Score: {best_score}", image=img_high, compound="left")
+        else:
+            self.top_high_score_label.configure(text=f"High Score 🏆: {best_score}", image="")
+
+        img_streak_top = self._get_icon_image("🔥")
+        if img_streak_top:
+            self.top_streak_label.configure(text=f" Daily Streak: {self.save_data.get('daily_streak', 0)}", image=img_streak_top, compound="left")
+        else:
+            self.top_streak_label.configure(text=f"Daily Streak 🔥: {self.save_data.get('daily_streak', 0)}", image="")
+
+        # HUD Side Panel
+        img_score = self._get_icon_image("🎯")
+        if img_score:
+            self.score_label.configure(text=f" Score: {self.score}", image=img_score, compound="left")
+        else:
+            self.score_label.configure(text=f"Score 🎯: {self.score}", image="")
+
+        img_acct = self._get_icon_image("⭐")
+        if img_acct:
+            self.account_level_label.configure(text=f" Account Level: {self.account_level} / 100", image=img_acct, compound="left")
+        else:
+            self.account_level_label.configure(text=f"Account Level ⭐: {self.account_level} / 100", image="")
+
+        img_lvl = self._get_icon_image("📈")
+        if img_lvl:
+            self.level_label.configure(text=f" Session Level: {self.level}", image=img_lvl, compound="left")
+        else:
+            self.level_label.configure(text=f"Session Level 📈: {self.level}", image="")
+
+        img_hearts = self._get_icon_image("💖")
+        if img_hearts:
+            self.lives_label.configure(text=f" Lives: {hearts}", image=img_hearts, compound="left")
+        else:
+            self.lives_label.configure(text=f"Lives 💖: {hearts}", image="")
+
+        img_strk = self._get_icon_image("🔥")
+        if img_strk:
+            self.streak_label.configure(text=f" Streak: {self.streak}   x{self.combo_multiplier}", image=img_strk, compound="left")
+        else:
+            self.streak_label.configure(text=f"Streak 🔥: {self.streak}   x{self.combo_multiplier}", image="")
+
+        img_rnd = self._get_icon_image("🔄")
+        if img_rnd:
+            self.round_label.configure(text=f" Round: {self.round_no}", image=img_rnd, compound="left")
+        else:
+            self.round_label.configure(text=f"Round 🔄: {self.round_no}", image="")
+
+        img_acc = self._get_icon_image("📊")
+        if img_acc:
+            self.accuracy_label.configure(text=f" Accuracy: {accuracy}%", image=img_acc, compound="left")
+        else:
+            self.accuracy_label.configure(text=f"Accuracy 📊: {accuracy}%", image="")
+
+        img_bst = self._get_icon_image("⚡")
+        if img_bst:
+            self.best_label.configure(text=f" Best Streak: {self.best_streak}", image=img_bst, compound="left")
+        else:
+            self.best_label.configure(text=f"Best Streak ⚡: {self.best_streak}", image="")
 
         for child in self.high_scores_frame.winfo_children():
             child.destroy()
@@ -1103,15 +1163,13 @@ class MemoryApp(ctk.CTk):
             text = f"{index + 1}. {item.get('name', 'Player')} {item.get('score', 0)} L{item.get('level', 1)} {item.get('difficulty', '')}"
             ctk.CTkLabel(self.high_scores_frame, text=text, anchor="w").grid(row=index, column=0, sticky="w")
 
-        for child in self.achievements_frame.winfo_children():
-            child.destroy()
+    def show_achievements(self):
         unlocked = set(self.save_data.get("achievements", []))
-        for index, achievement in enumerate(ACHIEVEMENTS):
-            mark = "OK" if achievement["id"] in unlocked else "--"
-            ctk.CTkLabel(self.achievements_frame, text=f"{mark} {achievement['name']}", anchor="w").grid(row=index, column=0, sticky="w")
+        AchievementsWindow(self, unlocked, self._get_icon_image)
 
     def _on_close(self):
         self._cancel_timers()
+        self._save_user_settings()
         self._record_high_score("Auto Save")
         self._flush_stats()
         self.destroy()

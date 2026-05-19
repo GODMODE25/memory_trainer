@@ -1,4 +1,11 @@
+# Ignore cached Twemoji assets
+assets/
+
+# Ignore user save files and configuration state
+saves/
+config.json
+
+# Python environment & cache
 __pycache__/
 *.pyc
-memory_save_*.json
-config.json
+.venv/
