@@ -424,7 +424,7 @@ class MemoryApp(ctk.CTk):
         title_lbl = ctk.CTkLabel(popup, text="Memory Trainer Quest", font=ctk.CTkFont(size=20, weight="bold"), text_color=HEADER_COLOR)
         title_lbl.pack(padx=20, pady=(20, 10))
         
-        desc_lbl = ctk.CTkLabel(popup, text="A tool to train your memory using various techniques like Chunking, Story Link, and Memory Palace.\n\nVersion 2.0.0 (Modular Edition)\n\nBuilt with CustomTkinter.\n\nSamuel Musa (c) 2026", wraplength=350, justify="left")
+        desc_lbl = ctk.CTkLabel(popup, text=f"A tool to train your memory using various techniques like Chunking, Story Link, and Memory Palace.\n\nVersion {APP_VERSION} (Modular Edition)\n\nBuilt with CustomTkinter.\n\nSamuel Musa (c) 2026", wraplength=350, justify="left")
         desc_lbl.pack(padx=20, pady=10)
         
         close_btn = ctk.CTkButton(popup, text="Close", command=popup.destroy)
@@ -673,8 +673,8 @@ class MemoryApp(ctk.CTk):
         self.entry.configure(state="disabled")
         self.result_label.configure(text="", text_color=BODY_COLOR)
 
-        length = self.compute_length(self.level, self.difficulty_var.get())
-        self.current_challenge = self.generate_challenge(self.mode_var.get(), length)
+        length = compute_length(self.level, self.difficulty_var.get())
+        self.current_challenge = generate_challenge(self.mode_var.get(), length)
         self._set_challenge_display(self.current_challenge, allow_assist=True)
 
         self.start_button.configure(text="Check", state="disabled", command=self.check_number)

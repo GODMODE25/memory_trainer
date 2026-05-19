@@ -1,6 +1,7 @@
 import os
 
 APP_TITLE = "Memory Trainer Quest"
+APP_VERSION = "2.0.0"
 WINDOW_SIZE = "1120x720"
 SAVE_FILE = os.path.join(os.path.dirname(__file__), "memory_save.json")
 SESSION_TYPES = ["Game", "Practice"]
