@@ -2,6 +2,12 @@
 
 A professional desktop application built with Python and CustomTkinter designed to help users train and improve their memory using various mnemonic techniques.
 
+## Showcase
+
+| Gameplay Dashboard | Practice Mode & Auto Coach |
+| :---: | :---: |
+| ![Gameplay Dashboard](screenshots/gameplay.png) | ![Practice Mode](screenshots/practice_mode.png) |
+
 ## Features
 
 - **Multiple Game Modes**: Practice with Numbers, Phone Numbers, Alphanumeric strings, Words, and Sequences.

@@ -84,6 +84,7 @@ class MemoryApp(ctk.CTk):
             self.after(100, self._show_auth_screen)
         self._fit_initial_window()
         self.bind("<Configure>", self._on_resize)
+        self.bind("<F12>", self.capture_screenshot)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _show_auth_screen(self):
@@ -1173,6 +1174,33 @@ class MemoryApp(ctk.CTk):
         self._record_high_score("Auto Save")
         self._flush_stats()
         self.destroy()
+
+    def capture_screenshot(self, event=None):
+        try:
+            import os
+            import time
+            from PIL import ImageGrab
+            
+            x = self.winfo_rootx()
+            y = self.winfo_rooty()
+            width = self.winfo_width()
+            height = self.winfo_height()
+            
+            base_dir = os.path.dirname(__file__)
+            screenshots_dir = os.path.join(base_dir, "screenshots")
+            os.makedirs(screenshots_dir, exist_ok=True)
+            
+            filename = os.path.join(screenshots_dir, f"screenshot_{int(time.time())}.png")
+            img = ImageGrab.grab(bbox=(x, y, x + width, y + height))
+            img.save(filename)
+            
+            if hasattr(self, "result_label"):
+                current_text = self.result_label.cget("text")
+                self.result_label.configure(text="📸 Screenshot saved successfully!", text_color="#33cc66")
+                self.after(2000, lambda: self.result_label.configure(text=current_text, text_color=BODY_COLOR))
+            print(f"Screenshot saved to: {filename}")
+        except Exception as e:
+            print(f"Failed to capture screenshot: {e}")
 
 
 if __name__ == "__main__":
