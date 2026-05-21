@@ -55,6 +55,23 @@ class MemoryApp(ctk.CTk):
         self.narrow_layout = None
         self.resize_after_id = None
         self.username = "DefaultUser" # Fallback
+        self.save_data = default_save()
+        self.score = 0
+        self.level = 1
+        self.lives = 4
+        self.streak = 0
+        self.best_streak = 0
+        self.round_no = 0
+        self.correct_count = 0
+        self.wrong_count = 0
+        self.practice_attempts = 0
+        self.practice_correct = 0
+        self.practice_streak = 0
+        self.practice_best_streak = 0
+        self.practice_techniques_used = {}
+        self.practice_total_memorize_time = 0.0
+        self.hints_used = 0
+        self.combo_multiplier = 1
         self.icon_cache = {}
         self._prefetch_completed = False
         import threading
@@ -293,11 +310,59 @@ class MemoryApp(ctk.CTk):
         self.entry.configure(state="disabled")
         self.entry.bind("<Return>", lambda _event: self.check_number())
 
+        # Keypad Frame
+        self.keypad_frame = ctk.CTkFrame(self.game_area, fg_color="transparent")
+        self.keypad_frame.grid(row=4, column=0, padx=24, pady=(5, 10))
+
+        keypad_layout = [
+            ["1", "2", "3", "A"],
+            ["4", "5", "6", "B"],
+            ["7", "8", "9", "C"],
+            ["D", "E", "F", ","],
+            ["Space", "0", "⌫", "Clr"]
+        ]
+
+        self.keypad_buttons = []
+        for r_idx, row_keys in enumerate(keypad_layout):
+            for c_idx, key in enumerate(row_keys):
+                if key in ("⌫", "Clr"):
+                    if key == "⌫":
+                        fg = ("#fee2e2", "#7f1d1d")
+                        txt_c = ("#b91c1c", "#fecaca")
+                        hov = ("#fca5a5", "#991b1b")
+                    else:  # Clr
+                        fg = ("#fef3c7", "#78350f")
+                        txt_c = ("#b45309", "#fef3c7")
+                        hov = ("#fde68a", "#92400e")
+                elif key in ("Space", ","):
+                    fg = ("#dbeafe", "#1e3a8a")
+                    txt_c = ("#1d4ed8", "#dbeafe")
+                    hov = ("#bfdbfe", "#1e40af")
+                else:
+                    fg = ("#f1f5f9", "#334155")
+                    txt_c = ("#334155", "#f8fafc")
+                    hov = ("#e2e8f0", "#475569")
+
+                btn = ctk.CTkButton(
+                    self.keypad_frame,
+                    text=key,
+                    width=65,
+                    height=40,
+                    corner_radius=8,
+                    font=ctk.CTkFont(size=15, weight="bold"),
+                    fg_color=fg,
+                    text_color=txt_c,
+                    hover_color=hov,
+                    command=lambda k=key: self._on_keypad_click(k)
+                )
+                btn.grid(row=r_idx, column=c_idx, padx=4, pady=4)
+                self.keypad_buttons.append(btn)
+
         self.result_label = ctk.CTkLabel(self.game_area, text="", font=ctk.CTkFont(size=16), wraplength=500)
-        self.result_label.grid(row=4, column=0, padx=20, pady=10)
+        self.result_label.grid(row=5, column=0, padx=20, pady=10)
 
         button_row = ctk.CTkFrame(self.game_area, fg_color="transparent")
-        button_row.grid(row=5, column=0, padx=20, pady=12)
+        button_row.grid(row=6, column=0, padx=20, pady=12)
         
         self.start_button = ctk.CTkButton(
             button_row, 
@@ -319,7 +384,7 @@ class MemoryApp(ctk.CTk):
         self.reset_button.grid(row=0, column=3, padx=5)
 
         slider_frame = ctk.CTkFrame(self.game_area, fg_color="transparent")
-        slider_frame.grid(row=6, column=0, padx=24, pady=(18, 20), sticky="ew")
+        slider_frame.grid(row=7, column=0, padx=24, pady=(18, 20), sticky="ew")
         slider_frame.grid_columnconfigure(1, weight=1)
 
         config = self._difficulty_config()
@@ -389,6 +454,8 @@ class MemoryApp(ctk.CTk):
 
         for row, label in enumerate([self.practice_attempts_label, self.practice_correct_label, self.practice_accuracy_label, self.practice_best_streak_label, self.practice_time_label], start=7):
             label.grid(row=row, column=0, padx=14, pady=2, sticky="w")
+
+        self._update_keypad_state()
 
     def _get_icon_image(self, emoji_char, size=(20, 20)):
         cache_key = (emoji_char, size)
@@ -490,8 +557,11 @@ class MemoryApp(ctk.CTk):
         challenge_wrap = max(260, min(720, content_width))
         sidebar_wrap = max(220, min(520, window_width - 80 if self.narrow_layout else 260))
         self.result_label.configure(wraplength=challenge_wrap)
-        if hasattr(self, "challenge_label"):
-            self.challenge_label.configure(wraplength=challenge_wrap)
+        if hasattr(self, "challenge_label") and self.challenge_label.winfo_exists():
+            try:
+                self.challenge_label.configure(wraplength=challenge_wrap)
+            except Exception:
+                pass
         for label in (self.coach_instruction_label, self.coach_example_label, self.coach_review_label):
             label.configure(wraplength=sidebar_wrap)
         if self.current_challenge and self.game_state in ("showing", "idle"):
@@ -682,6 +752,7 @@ class MemoryApp(ctk.CTk):
         self.hint_button.configure(state="disabled")
         self.skip_button.configure(state="disabled")
         self.game_state = "showing"
+        self._update_keypad_state()
         self.memorize_start_time = time.monotonic()
         self.recall_progress.set(1)
         self.countdown_label.configure(text=f"{self.display_slider.get():.1f}s")
@@ -708,6 +779,7 @@ class MemoryApp(ctk.CTk):
         self.hint_button.configure(text="Coach Hint" if self.is_practice_mode() else "Hint", state="normal")
         self.skip_button.configure(state="normal")
         self.game_state = "waiting"
+        self._update_keypad_state()
         if self.timer_var.get():
             self.recall_deadline = time.monotonic() + self.recall_slider.get()
             self._tick_recall()
@@ -775,6 +847,7 @@ class MemoryApp(ctk.CTk):
         self.hint_button.configure(state="disabled")
         self.skip_button.configure(state="disabled")
         self.game_state = "idle"
+        self._update_keypad_state()
 
         mode = self.mode_var.get()
         correct = not force_wrong and normalize_compare(mode, user_input, answer)
@@ -944,6 +1017,7 @@ class MemoryApp(ctk.CTk):
         self.result_label.configure(text=f"Final score: {self.score}", text_color="#ff5555")
         self.start_button.configure(text="New Game", state="normal", command=self.reset_game)
         self.game_state = "game_over"
+        self._update_keypad_state()
         self._refresh_hud()
 
     def reset_game(self):
@@ -953,6 +1027,7 @@ class MemoryApp(ctk.CTk):
         self._reset_run_state()
         self.current_challenge = ""
         self.game_state = "idle"
+        self._update_keypad_state()
         self.entry.configure(state="normal")
         self.entry.delete(0, "end")
         self.entry.configure(state="disabled")
@@ -1201,6 +1276,31 @@ class MemoryApp(ctk.CTk):
             print(f"Screenshot saved to: {filename}")
         except Exception as e:
             print(f"Failed to capture screenshot: {e}")
+
+    def _on_keypad_click(self, key):
+        if self.game_state != "waiting":
+            return
+        
+        self.entry.configure(state="normal")
+        if key == "⌫":
+            current = self.entry.get()
+            self.entry.delete(0, "end")
+            self.entry.insert(0, current[:-1])
+        elif key == "Clr":
+            self.entry.delete(0, "end")
+        elif key == "Space":
+            self.entry.insert("end", " ")
+        else:
+            self.entry.insert("end", key)
+            
+        self.entry.configure(state="normal" if self.game_state == "waiting" else "disabled")
+
+    def _update_keypad_state(self):
+        if not hasattr(self, "keypad_buttons"):
+            return
+        state = "normal" if self.game_state == "waiting" else "disabled"
+        for btn in self.keypad_buttons:
+            btn.configure(state=state)
 
 
 if __name__ == "__main__":
