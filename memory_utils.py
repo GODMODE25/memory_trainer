@@ -3,6 +3,7 @@ import json
 import urllib.request
 import customtkinter as ctk
 from PIL import Image
+from memory_levels import default_digit_track, merge_digit_track
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 
@@ -69,7 +70,8 @@ def default_save():
             "current": 0,
             "completed": False,
             "date": ""
-        }
+        },
+        "digit_track": default_digit_track(),
     }
 
 
@@ -87,6 +89,7 @@ def load_save(username="DefaultUser"):
             data["daily_streak"] = loaded.get("daily_streak", 0)
             data["last_played_date"] = loaded.get("last_played_date", "")
             data["daily_quest"] = loaded.get("daily_quest", data["daily_quest"])
+            data["digit_track"] = merge_digit_track(loaded.get("digit_track", {}))
     except (OSError, json.JSONDecodeError, TypeError):
         return default_save()
     return data

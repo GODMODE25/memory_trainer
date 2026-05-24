@@ -4,6 +4,9 @@ import os
 import random
 import string
 import time
+from tkinter import filedialog
+
+from PIL import Image, ImageOps
 
 from memory_data import *
 from memory_utils import (
@@ -19,8 +22,16 @@ from memory_engine import (
     compute_length,
     generate_challenge,
     normalize_compare,
+    analyze_digit_answer,
     compute_score_gain,
+    compute_digit_track_score,
     calculate_account_level,
+)
+from memory_levels import (
+    DIGIT_TRACK_LEVELS,
+    UNLOCK_CORRECT_TARGET,
+    get_digit_level,
+    record_digit_track_result,
 )
 from memory_auth import AuthWindow
 from memory_achievements import AchievementsWindow
@@ -52,6 +63,11 @@ class MemoryApp(ctk.CTk):
         self.stats_flushed = True
         self.score_recorded = True
         self.achievement_message = ""
+        self.phase_text = "Ready"
+        self.wallpaper_path = ""
+        self.wallpaper_image = None
+        self.wallpaper_source_image = None
+        self.wallpaper_after_id = None
         self.narrow_layout = None
         self.resize_after_id = None
         self.username = "DefaultUser" # Fallback
@@ -72,6 +88,10 @@ class MemoryApp(ctk.CTk):
         self.practice_total_memorize_time = 0.0
         self.hints_used = 0
         self.combo_multiplier = 1
+        self.last_round_accuracy = 0
+        self.last_round_time_left = 0
+        self.last_round_digits = 0
+        self.last_digit_track_unlock = False
         self.icon_cache = {}
         self._prefetch_completed = False
         import threading
@@ -84,6 +104,7 @@ class MemoryApp(ctk.CTk):
         
         self.session_type_var = ctk.StringVar(value="Game")
         self.mode_var = ctk.StringVar(value="Numbers")
+        self.play_style_var = ctk.StringVar(value="Classic")
         self.difficulty_var = ctk.StringVar(value="Medium")
         self.theme_var = ctk.StringVar(value="System")
         self.technique_var = ctk.StringVar(value="Auto Coach")
@@ -129,6 +150,8 @@ class MemoryApp(ctk.CTk):
                 self.session_type_var.set(settings["session_type"])
             if "mode" in settings:
                 self.mode_var.set(settings["mode"])
+            if "play_style" in settings:
+                self.play_style_var.set(settings["play_style"])
             if "difficulty" in settings:
                 self.difficulty_var.set(settings["difficulty"])
             if "theme" in settings:
@@ -141,17 +164,24 @@ class MemoryApp(ctk.CTk):
                 self.assist_var.set(settings["assist"])
             if "timer" in settings:
                 self.timer_var.set(settings["timer"])
+            if "wallpaper_path" in settings:
+                self.wallpaper_path = settings.get("wallpaper_path", "")
+                self._apply_wallpaper()
             
             # Sync sliders to match loaded difficulty/session settings
             if self.is_practice_mode():
                 self.display_slider.set(max(self.display_slider.get(), 5.0))
                 self.recall_slider.set(max(self.recall_slider.get(), 15.0))
+            elif self.is_digit_track_mode():
+                digit_level = get_digit_level(self._digit_track_level_id())
+                self.display_slider.set(digit_level["display"])
             else:
                 cfg = self._difficulty_config()
                 self.display_slider.set(cfg["display"])
                 self.recall_slider.set(cfg["recall"])
             self.update_display_label(self.display_slider.get())
             self.update_recall_label(self.recall_slider.get())
+            self._rebuild_keypad()
             self.reset_game()
 
     def _save_user_settings(self):
@@ -162,11 +192,13 @@ class MemoryApp(ctk.CTk):
         settings = {
             "session_type": self.session_type_var.get(),
             "mode": self.mode_var.get(),
+            "play_style": self.play_style_var.get(),
             "difficulty": self.difficulty_var.get(),
             "theme": self.theme_var.get(),
             "technique": self.technique_var.get(),
             "assist": self.assist_var.get(),
             "timer": self.timer_var.get(),
+            "wallpaper_path": self.wallpaper_path,
         }
         config[user_key] = settings
         config["last_settings"] = settings
@@ -231,6 +263,10 @@ class MemoryApp(ctk.CTk):
         self.practice_total_memorize_time = 0.0
         self.hints_used = 0
         self.combo_multiplier = 1
+        self.last_round_accuracy = 0
+        self.last_round_time_left = 0
+        self.last_round_digits = 0
+        self.last_digit_track_unlock = False
         self.stats_flushed = False
         self.score_recorded = False
 
@@ -254,6 +290,10 @@ class MemoryApp(ctk.CTk):
         self.difficulty_menu = ctk.CTkOptionMenu(self.top_bar, values=list(DIFFICULTIES), variable=self.difficulty_var, command=self._on_difficulty_change, width=120)
         self.difficulty_menu.grid(row=0, column=5, padx=(0, 12), pady=(10, 4))
 
+        ctk.CTkLabel(self.top_bar, text="Play", text_color=SUBHEADER_COLOR, font=ctk.CTkFont(weight="bold")).grid(row=0, column=6, padx=(0, 6), pady=(10, 4))
+        self.play_style_menu = ctk.CTkOptionMenu(self.top_bar, values=PLAY_STYLES, variable=self.play_style_var, command=self._on_play_style_change, width=120)
+        self.play_style_menu.grid(row=0, column=7, padx=(0, 12), pady=(10, 4))
+
         ctk.CTkLabel(self.top_bar, text="Theme", text_color=SUBHEADER_COLOR, font=ctk.CTkFont(weight="bold")).grid(row=1, column=0, padx=(14, 6), pady=(4, 10))
         self.theme_menu = ctk.CTkOptionMenu(self.top_bar, values=["System", "Dark", "Light"], variable=self.theme_var, command=self._on_theme_change, width=105)
         self.theme_menu.grid(row=1, column=1, padx=(0, 12), pady=(4, 10))
@@ -264,8 +304,14 @@ class MemoryApp(ctk.CTk):
         self.timer_check = ctk.CTkCheckBox(self.top_bar, text="Timer", variable=self.timer_var, width=74)
         self.timer_check.grid(row=1, column=3, padx=(0, 12), pady=(4, 10), sticky="w")
 
+        self.wallpaper_button = ctk.CTkButton(self.top_bar, text="Wallpaper", width=90, command=self.choose_wallpaper)
+        self.wallpaper_button.grid(row=1, column=4, padx=(0, 8), pady=(4, 10), sticky="w")
+
+        self.clear_wallpaper_button = ctk.CTkButton(self.top_bar, text="Clear", width=60, command=self.clear_wallpaper)
+        self.clear_wallpaper_button.grid(row=1, column=5, padx=(0, 12), pady=(4, 10), sticky="w")
+
         self.about_button = ctk.CTkButton(self.top_bar, text="About", width=80, command=self.show_about)
-        self.about_button.grid(row=0, column=6, padx=(0, 12), pady=(10, 4))
+        self.about_button.grid(row=0, column=8, padx=(0, 12), pady=(10, 4))
 
         self.top_high_score_label = ctk.CTkLabel(self.top_bar, text="High Score: 0", text_color=HEADER_COLOR, font=ctk.CTkFont(weight="bold"))
         self.top_high_score_label.grid(row=1, column=9, padx=(0, 14), pady=(4, 10), sticky="e")
@@ -275,6 +321,9 @@ class MemoryApp(ctk.CTk):
 
         self.logout_button = ctk.CTkButton(self.top_bar, text="Logout", width=60, command=self._on_logout)
         self.logout_button.grid(row=0, column=9, padx=(0, 14), pady=(10, 4), sticky="e")
+
+        self.wallpaper_label = ctk.CTkLabel(self, text="")
+        self.wallpaper_label.grid(row=1, column=0, sticky="nsew")
 
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_frame.grid(row=1, column=0, padx=16, pady=16, sticky="nsew")
@@ -289,15 +338,18 @@ class MemoryApp(ctk.CTk):
         self.title_label = ctk.CTkLabel(self.game_area, text="Memory Trainer", font=ctk.CTkFont(family="Impact", size=36), text_color=HEADER_COLOR)
         self.title_label.grid(row=0, column=0, padx=20, pady=(22, 12))
 
+        self.phase_label = ctk.CTkLabel(self.game_area, text="Ready", font=ctk.CTkFont(size=15, weight="bold"), text_color=SUBHEADER_COLOR)
+        self.phase_label.grid(row=1, column=0, padx=20, pady=(0, 4))
+
         self.challenge_frame = ctk.CTkFrame(self.game_area, fg_color="transparent")
-        self.challenge_frame.grid(row=1, column=0, padx=20, pady=(18, 14), sticky="ew")
+        self.challenge_frame.grid(row=2, column=0, padx=20, pady=(18, 14), sticky="ew")
         self.challenge_frame.grid_columnconfigure(0, weight=1)
         self.challenge_label = ctk.CTkLabel(self.challenge_frame, text="Click Start to begin", font=ctk.CTkFont(family="Consolas", size=34, weight="bold"), wraplength=460)
         self.challenge_label.grid(row=0, column=0, sticky="ew")
         self.challenge_widgets = [self.challenge_label]
 
         progress_row = ctk.CTkFrame(self.game_area, fg_color="transparent")
-        progress_row.grid(row=2, column=0, padx=24, pady=(0, 10), sticky="ew")
+        progress_row.grid(row=3, column=0, padx=24, pady=(0, 10), sticky="ew")
         progress_row.grid_columnconfigure(0, weight=1)
         self.recall_progress = ctk.CTkProgressBar(progress_row)
         self.recall_progress.grid(row=0, column=0, padx=(0, 10), sticky="ew")
@@ -306,63 +358,22 @@ class MemoryApp(ctk.CTk):
         self.countdown_label.grid(row=0, column=1)
 
         self.entry = ctk.CTkEntry(self.game_area, placeholder_text="Enter the value here", width=290, justify="center", font=ctk.CTkFont(size=16))
-        self.entry.grid(row=3, column=0, padx=24, pady=8)
+        self.entry.grid(row=4, column=0, padx=24, pady=8)
         self.entry.configure(state="disabled")
         self.entry.bind("<Return>", lambda _event: self.check_number())
 
         # Keypad Frame
         self.keypad_frame = ctk.CTkFrame(self.game_area, fg_color="transparent")
-        self.keypad_frame.grid(row=4, column=0, padx=24, pady=(5, 10))
-
-        keypad_layout = [
-            ["1", "2", "3", "A"],
-            ["4", "5", "6", "B"],
-            ["7", "8", "9", "C"],
-            ["D", "E", "F", ","],
-            ["Space", "0", "⌫", "Clr"]
-        ]
+        self.keypad_frame.grid(row=5, column=0, padx=24, pady=(5, 10))
 
         self.keypad_buttons = []
-        for r_idx, row_keys in enumerate(keypad_layout):
-            for c_idx, key in enumerate(row_keys):
-                if key in ("⌫", "Clr"):
-                    if key == "⌫":
-                        fg = ("#fee2e2", "#7f1d1d")
-                        txt_c = ("#b91c1c", "#fecaca")
-                        hov = ("#fca5a5", "#991b1b")
-                    else:  # Clr
-                        fg = ("#fef3c7", "#78350f")
-                        txt_c = ("#b45309", "#fef3c7")
-                        hov = ("#fde68a", "#92400e")
-                elif key in ("Space", ","):
-                    fg = ("#dbeafe", "#1e3a8a")
-                    txt_c = ("#1d4ed8", "#dbeafe")
-                    hov = ("#bfdbfe", "#1e40af")
-                else:
-                    fg = ("#f1f5f9", "#334155")
-                    txt_c = ("#334155", "#f8fafc")
-                    hov = ("#e2e8f0", "#475569")
-
-                btn = ctk.CTkButton(
-                    self.keypad_frame,
-                    text=key,
-                    width=65,
-                    height=40,
-                    corner_radius=8,
-                    font=ctk.CTkFont(size=15, weight="bold"),
-                    fg_color=fg,
-                    text_color=txt_c,
-                    hover_color=hov,
-                    command=lambda k=key: self._on_keypad_click(k)
-                )
-                btn.grid(row=r_idx, column=c_idx, padx=4, pady=4)
-                self.keypad_buttons.append(btn)
+        self._rebuild_keypad()
 
         self.result_label = ctk.CTkLabel(self.game_area, text="", font=ctk.CTkFont(size=16), wraplength=500)
-        self.result_label.grid(row=5, column=0, padx=20, pady=10)
+        self.result_label.grid(row=6, column=0, padx=20, pady=10)
 
         button_row = ctk.CTkFrame(self.game_area, fg_color="transparent")
-        button_row.grid(row=6, column=0, padx=20, pady=12)
+        button_row.grid(row=7, column=0, padx=20, pady=12)
         
         self.start_button = ctk.CTkButton(
             button_row, 
@@ -384,13 +395,13 @@ class MemoryApp(ctk.CTk):
         self.reset_button.grid(row=0, column=3, padx=5)
 
         slider_frame = ctk.CTkFrame(self.game_area, fg_color="transparent")
-        slider_frame.grid(row=7, column=0, padx=24, pady=(18, 20), sticky="ew")
+        slider_frame.grid(row=8, column=0, padx=24, pady=(18, 20), sticky="ew")
         slider_frame.grid_columnconfigure(1, weight=1)
 
         config = self._difficulty_config()
         self.display_label = ctk.CTkLabel(slider_frame, text=f"Display time: {config['display']:.1f}s", width=130, anchor="w")
         self.display_label.grid(row=0, column=0, padx=(0, 10), pady=5, sticky="w")
-        self.display_slider = ctk.CTkSlider(slider_frame, from_=1, to=10, number_of_steps=18, command=self.update_display_label)
+        self.display_slider = ctk.CTkSlider(slider_frame, from_=1, to=30, number_of_steps=58, command=self.update_display_label)
         self.display_slider.set(config["display"])
         self.display_slider.grid(row=0, column=1, pady=5, sticky="ew")
 
@@ -428,8 +439,19 @@ class MemoryApp(ctk.CTk):
         self.achievements_button = ctk.CTkButton(self.game_sidebar, text="Achievements 🏆", command=self.show_achievements, font=ctk.CTkFont(weight="bold"))
         self.achievements_button.grid(row=11, column=0, padx=14, pady=(16, 10), sticky="ew")
 
+        self.digit_track_frame = ctk.CTkFrame(self.game_sidebar, fg_color=("gray90", "gray20"), corner_radius=8)
+        self.digit_track_frame.grid(row=12, column=0, padx=14, pady=(4, 12), sticky="ew")
+        self.digit_track_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(self.digit_track_frame, text="Digit Track", font=ctk.CTkFont(size=15, weight="bold"), text_color=SUBHEADER_COLOR).grid(row=0, column=0, padx=12, pady=(10, 4), sticky="w")
+        self.digit_track_level_label = ctk.CTkLabel(self.digit_track_frame, text="", anchor="w", justify="left")
+        self.digit_track_level_label.grid(row=1, column=0, padx=12, pady=2, sticky="ew")
+        self.digit_track_progress_label = ctk.CTkLabel(self.digit_track_frame, text="", anchor="w", justify="left")
+        self.digit_track_progress_label.grid(row=2, column=0, padx=12, pady=2, sticky="ew")
+        self.digit_track_best_label = ctk.CTkLabel(self.digit_track_frame, text="", anchor="w", justify="left")
+        self.digit_track_best_label.grid(row=3, column=0, padx=12, pady=(2, 10), sticky="ew")
+
         self.quest_frame = ctk.CTkFrame(self.game_sidebar, fg_color="transparent")
-        self.quest_frame.grid(row=12, column=0, padx=14, sticky="ew")
+        self.quest_frame.grid(row=13, column=0, padx=14, sticky="ew")
 
         self.coach_sidebar = ctk.CTkFrame(self.hud_frame, fg_color="transparent")
         self.coach_sidebar.grid_columnconfigure(0, weight=1)
@@ -468,7 +490,7 @@ class MemoryApp(ctk.CTk):
         return img
 
     def _prefetch_icons(self):
-        icons_to_fetch = ["🎯", "⭐", "📈", "💖", "🔥", "🔄", "📊", "⚡", "📜", "🎉", "💡", "💎", "🧗", "🦾", "🔒", "✅", "⏱"]
+        icons_to_fetch = ["🎯", "⭐", "📈", "💖", "🔥", "🔄", "📊", "⚡", "📜", "🎉", "💡", "💎", "🧗", "🦾", "🔒", "✅", "⏱", "🏆", "🚀", "🏅"]
         for icon in icons_to_fetch:
             get_emoji_image(icon)
         self._prefetch_completed = True
@@ -498,6 +520,56 @@ class MemoryApp(ctk.CTk):
         close_btn = ctk.CTkButton(popup, text="Close", command=popup.destroy)
         close_btn.pack(pady=(20, 10))
 
+    def choose_wallpaper(self):
+        path = filedialog.askopenfilename(
+            title="Choose wallpaper",
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        self.wallpaper_path = path
+        self._apply_wallpaper()
+        self._save_user_settings()
+
+    def clear_wallpaper(self):
+        self.wallpaper_path = ""
+        self.wallpaper_source_image = None
+        self.wallpaper_image = None
+        if hasattr(self, "wallpaper_label"):
+            self.wallpaper_label.configure(image="", text="")
+        self._save_user_settings()
+
+    def _apply_wallpaper(self):
+        if not hasattr(self, "wallpaper_label"):
+            return
+        if not self.wallpaper_path or not os.path.exists(self.wallpaper_path):
+            self.clear_wallpaper()
+            return
+        try:
+            self.wallpaper_source_image = Image.open(self.wallpaper_path).convert("RGB")
+            self._render_wallpaper()
+        except Exception:
+            self.clear_wallpaper()
+
+    def _render_wallpaper(self):
+        self.wallpaper_after_id = None
+        if not hasattr(self, "wallpaper_label") or self.wallpaper_source_image is None:
+            return
+        width = max(1, self.winfo_width())
+        height = max(1, self.winfo_height() - self.top_bar.winfo_height())
+        if width < 20 or height < 20:
+            return
+        resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS", Image.BICUBIC)
+        fitted = ImageOps.fit(self.wallpaper_source_image, (width, height), method=resample)
+        self.wallpaper_image = ctk.CTkImage(light_image=fitted, dark_image=fitted, size=(width, height))
+        self.wallpaper_label.configure(image=self.wallpaper_image, text="")
+        self.wallpaper_label.lower()
+        self.main_frame.lift()
+        self.top_bar.lift()
+
     def _fit_initial_window(self):
         self.update_idletasks()
         requested_width = max(self.winfo_reqwidth() + 40, 1120)
@@ -520,6 +592,12 @@ class MemoryApp(ctk.CTk):
             except ValueError:
                 pass
         self.resize_after_id = self.after(80, self._apply_responsive_layout)
+        if self.wallpaper_after_id is not None:
+            try:
+                self.after_cancel(self.wallpaper_after_id)
+            except ValueError:
+                pass
+        self.wallpaper_after_id = self.after(120, self._render_wallpaper)
 
     def _window_width(self):
         try:
@@ -550,6 +628,7 @@ class MemoryApp(ctk.CTk):
                 self.game_area.grid(row=0, column=0, padx=(0, 12), pady=0, sticky="nsew")
                 self.hud_frame.grid(row=0, column=1, sticky="nsew")
         self._update_wrap_lengths()
+        self._render_wallpaper()
 
     def _update_wrap_lengths(self):
         window_width = max(320, self._window_width())
@@ -569,6 +648,25 @@ class MemoryApp(ctk.CTk):
 
     def is_practice_mode(self):
         return self.session_type_var.get() == "Practice"
+
+    def is_digit_track_mode(self):
+        return (
+            self.session_type_var.get() == "Game"
+            and self.mode_var.get() == "Numbers"
+            and self.play_style_var.get() == "Digit Track"
+        )
+
+    def _digit_track_data(self):
+        return self.save_data.setdefault("digit_track", default_save()["digit_track"])
+
+    def _digit_track_level_id(self):
+        track = self._digit_track_data()
+        return max(1, min(13, int(track.get("current_level", 1) or 1)))
+
+    def _set_phase(self, text):
+        self.phase_text = text
+        if hasattr(self, "phase_label"):
+            self.phase_label.configure(text=text)
 
     def get_selected_technique(self):
         selected = self.technique_var.get()
@@ -744,9 +842,16 @@ class MemoryApp(ctk.CTk):
         self.entry.configure(state="disabled")
         self.result_label.configure(text="", text_color=BODY_COLOR)
 
-        length = compute_length(self.level, self.difficulty_var.get())
+        if self.is_digit_track_mode():
+            digit_level = get_digit_level(self._digit_track_level_id())
+            length = digit_level["digits"]
+            self.display_slider.set(digit_level["display"])
+            self.update_display_label(digit_level["display"])
+        else:
+            length = compute_length(self.level, self.difficulty_var.get())
         self.current_challenge = generate_challenge(self.mode_var.get(), length)
         self._set_challenge_display(self.current_challenge, allow_assist=True)
+        self._set_phase("Memorize")
 
         self.start_button.configure(text="Check", state="disabled", command=self.check_number)
         self.hint_button.configure(state="disabled")
@@ -779,6 +884,7 @@ class MemoryApp(ctk.CTk):
         self.hint_button.configure(text="Coach Hint" if self.is_practice_mode() else "Hint", state="normal")
         self.skip_button.configure(state="normal")
         self.game_state = "waiting"
+        self._set_phase("Recall")
         self._update_keypad_state()
         if self.timer_var.get():
             self.recall_deadline = time.monotonic() + self.recall_slider.get()
@@ -847,15 +953,17 @@ class MemoryApp(ctk.CTk):
         self.hint_button.configure(state="disabled")
         self.skip_button.configure(state="disabled")
         self.game_state = "idle"
+        self._set_phase("Review")
         self._update_keypad_state()
 
         mode = self.mode_var.get()
-        correct = not force_wrong and normalize_compare(mode, user_input, answer)
+        digit_analysis = analyze_digit_answer(user_input, answer) if self.is_digit_track_mode() else None
+        correct = not force_wrong and (digit_analysis["correct"] if digit_analysis else normalize_compare(mode, user_input, answer))
         if correct:
-            self.apply_correct(time_left)
+            self.apply_correct(time_left, digit_analysis)
         else:
             message = "Time's up" if timed_out else "Skipped" if force_wrong else "Incorrect"
-            self.apply_wrong(f"{message}. It was {answer}")
+            self.apply_wrong(f"{message}. It was {answer}", digit_analysis)
 
         self.recall_progress.set(0)
         self.countdown_label.configure(text="0.0s")
@@ -867,8 +975,28 @@ class MemoryApp(ctk.CTk):
             self.check_achievements()
         self._refresh_hud()
 
-    def apply_correct(self, time_left):
+    def _format_digit_feedback(self, analysis):
+        if not analysis:
+            return ""
+        marks = []
+        for detail in analysis["details"][:18]:
+            if detail["correct"]:
+                marks.append(f"{detail['expected']}✓")
+            elif detail["missing"]:
+                marks.append(f"{detail['expected']}?")
+            elif detail["extra"]:
+                marks.append(f"+{detail['actual']}")
+            else:
+                marks.append(f"{detail['actual']}→{detail['expected']}")
+        if len(analysis["details"]) > 18:
+            marks.append("...")
+        return " | ".join(marks)
+
+    def apply_correct(self, time_left, digit_analysis=None):
         length = len(self.current_challenge.replace(" ", "").replace(",", ""))
+        self.last_round_time_left = time_left
+        self.last_round_digits = length
+        self.last_round_accuracy = 100 if not digit_analysis else digit_analysis["accuracy"]
         self.correct_count += 1
         self.streak += 1
         self.best_streak = max(self.best_streak, self.streak)
@@ -880,15 +1008,30 @@ class MemoryApp(ctk.CTk):
             self._track_practice_technique()
             self.result_label.configure(text="Correct. Nice method work.", text_color="#33cc66")
         else:
-            gain = compute_score_gain(length, time_left, self.hints_used, self.streak, self.difficulty_var.get(), self.recall_slider.get())
+            if self.is_digit_track_mode():
+                level_id = self._digit_track_level_id()
+                gain = compute_digit_track_score(level_id, self.last_round_accuracy, time_left, self.hints_used, self.streak, self.recall_slider.get())
+                self.save_data["digit_track"], unlocked, recent_accuracy = record_digit_track_result(
+                    self._digit_track_data(), level_id, True, self.last_round_accuracy, gain
+                )
+                self.last_digit_track_unlock = unlocked
+                unlock_text = " | Next level unlocked!" if unlocked else ""
+                time_used = self.recall_slider.get() - time_left if self.timer_var.get() else 0
+                self.result_label.configure(
+                    text=f"Correct! +{gain} | Accuracy {self.last_round_accuracy}% | Time {time_used:.1f}s | Recent {recent_accuracy}%{unlock_text}",
+                    text_color="#33cc66",
+                )
+                save_save(self.save_data, self.username)
+            else:
+                gain = compute_score_gain(length, time_left, self.hints_used, self.streak, self.difficulty_var.get(), self.recall_slider.get())
+                self.result_label.configure(text=f"Correct! +{gain}", text_color="#33cc66")
             self.score += gain
             self.combo_multiplier = 1 + (self.streak // 3)
-            previous_level = self.level
-            self.level = 1 + (self.correct_count // 3)
-            if self.level > previous_level:
-                self.result_label.configure(text=f"LEVEL UP! Correct +{gain}", text_color="#33cc66")
-            else:
-                self.result_label.configure(text=f"Correct! +{gain}", text_color="#33cc66")
+            if not self.is_digit_track_mode():
+                previous_level = self.level
+                self.level = 1 + (self.correct_count // 3)
+                if self.level > previous_level:
+                    self.result_label.configure(text=f"LEVEL UP! Correct +{gain}", text_color="#33cc66")
         self._set_challenge_display(self.current_challenge, text_color="#33cc66", allow_assist=False)
         self.after(400, lambda: self._set_challenge_text_color(BODY_COLOR))
         
@@ -902,9 +1045,12 @@ class MemoryApp(ctk.CTk):
                 self.result_label.configure(text=f"{current_text} | Daily Quest Completed!")
             save_save(self.save_data, self.username)
 
-    def apply_wrong(self, message):
+    def apply_wrong(self, message, digit_analysis=None):
         self.wrong_count += 1
         self.streak = 0
+        if digit_analysis:
+            self.last_round_accuracy = digit_analysis["accuracy"]
+            self.last_round_digits = digit_analysis["total_digits"]
         if self.is_practice_mode():
             self.practice_attempts += 1
             self.practice_streak = 0
@@ -914,7 +1060,23 @@ class MemoryApp(ctk.CTk):
         else:
             self.lives -= 1
             self.combo_multiplier = 1
-            self.result_label.configure(text=message, text_color="#ff5555")
+            if self.is_digit_track_mode() and digit_analysis:
+                level_id = self._digit_track_level_id()
+                consolation = compute_digit_track_score(level_id, digit_analysis["accuracy"], 0, self.hints_used, 0, self.recall_slider.get()) if digit_analysis["accuracy"] else 0
+                if consolation:
+                    self.score += consolation
+                self.save_data["digit_track"], _, recent_accuracy = record_digit_track_result(
+                    self._digit_track_data(), level_id, False, digit_analysis["accuracy"], consolation
+                )
+                details = self._format_digit_feedback(digit_analysis)
+                extra_score = f" | +{consolation}" if consolation else ""
+                self.result_label.configure(
+                    text=f"{message} | Accuracy {digit_analysis['accuracy']}%{extra_score} | Recent {recent_accuracy}%\n{details}",
+                    text_color="#ff5555",
+                )
+                save_save(self.save_data, self.username)
+            else:
+                self.result_label.configure(text=message, text_color="#ff5555")
         self._set_challenge_display(self.current_challenge, text_color="#ff5555", allow_assist=False)
         self.after(400, lambda: self._set_challenge_text_color(BODY_COLOR))
         if not self.is_practice_mode() and self.lives <= 0:
@@ -923,6 +1085,18 @@ class MemoryApp(ctk.CTk):
     def check_achievements(self):
         unlocked = set(self.save_data.get("achievements", []))
         newly_unlocked = []
+        digit_track = self.save_data.get("digit_track", {})
+        cleared_levels = [
+            int(level_id)
+            for level_id, stats in digit_track.get("levels", {}).items()
+            if str(level_id).isdigit() and stats.get("cleared")
+        ]
+        max_cleared_digit_level = max(cleared_levels or [0])
+        is_digit_speed = (
+            self.is_digit_track_mode()
+            and self.last_round_accuracy == 100
+            and self.last_round_time_left >= (self.recall_slider.get() * 0.4)
+        )
         for achievement in ACHIEVEMENTS:
             if achievement["id"] in unlocked:
                 continue
@@ -938,6 +1112,9 @@ class MemoryApp(ctk.CTk):
                     and self.hints_used == 0
                     and self.streak > 0
                 )
+                or (predicate.startswith("digit_level>=") and max_cleared_digit_level >= int(predicate.split(">=")[1]))
+                or (predicate == "perfect_digits>=10" and self.last_round_accuracy == 100 and self.last_round_digits >= 10)
+                or (predicate == "digit_speed" and is_digit_speed)
             )
             if earned:
                 unlocked.add(achievement["id"])
@@ -997,8 +1174,9 @@ class MemoryApp(ctk.CTk):
         entry = {
             "name": name[:16] or "Player",
             "score": self.score,
-            "level": self.level,
+            "level": self._digit_track_level_id() if self.is_digit_track_mode() else self.level,
             "mode": self.mode_var.get(),
+            "style": self.play_style_var.get(),
             "difficulty": self.difficulty_var.get(),
             "date": datetime.datetime.now().strftime("%Y-%m-%d"),
         }
@@ -1014,6 +1192,7 @@ class MemoryApp(ctk.CTk):
         name = dialog.get_input() or "Player"
         self._record_high_score(name)
         self._set_challenge_display("Game Over", text_color="#ff5555")
+        self._set_phase("Game Over")
         self.result_label.configure(text=f"Final score: {self.score}", text_color="#ff5555")
         self.start_button.configure(text="New Game", state="normal", command=self.reset_game)
         self.game_state = "game_over"
@@ -1032,6 +1211,7 @@ class MemoryApp(ctk.CTk):
         self.entry.delete(0, "end")
         self.entry.configure(state="disabled")
         self._set_challenge_display("Click Start to begin", text_color=BODY_COLOR)
+        self._set_phase("Ready")
         self.result_label.configure(text="", text_color=BODY_COLOR)
         self.recall_progress.set(0)
         self.countdown_label.configure(text="0.0s")
@@ -1045,6 +1225,7 @@ class MemoryApp(ctk.CTk):
 
     def _on_session_change(self, value):
         if value == "Practice":
+            self.play_style_var.set("Classic")
             self.assist_var.set(True)
             self.timer_var.set(False)
             self.display_slider.set(max(self.display_slider.get(), 5.0))
@@ -1052,17 +1233,42 @@ class MemoryApp(ctk.CTk):
             self.update_display_label(self.display_slider.get())
             self.update_recall_label(self.recall_slider.get())
         else:
-            config = self._difficulty_config()
-            self.display_slider.set(config["display"])
-            self.recall_slider.set(config["recall"])
-            self.update_display_label(config["display"])
-            self.update_recall_label(config["recall"])
+            if self.is_digit_track_mode():
+                digit_level = get_digit_level(self._digit_track_level_id())
+                self.display_slider.set(digit_level["display"])
+                self.update_display_label(digit_level["display"])
+            else:
+                config = self._difficulty_config()
+                self.display_slider.set(config["display"])
+                self.recall_slider.set(config["recall"])
+                self.update_display_label(config["display"])
+                self.update_recall_label(config["recall"])
         self.reset_game()
 
     def _on_mode_change(self, _value):
+        if self.mode_var.get() != "Numbers":
+            self.play_style_var.set("Classic")
+        self._rebuild_keypad()
+        self.reset_game()
+
+    def _on_play_style_change(self, value):
+        if value == "Digit Track":
+            self.session_type_var.set("Game")
+            self.mode_var.set("Numbers")
+            digit_level = get_digit_level(self._digit_track_level_id())
+            self.display_slider.set(digit_level["display"])
+            self.update_display_label(digit_level["display"])
+            self.timer_var.set(True)
+        self._rebuild_keypad()
         self.reset_game()
 
     def _on_difficulty_change(self, _value):
+        if self.is_digit_track_mode():
+            digit_level = get_digit_level(self._digit_track_level_id())
+            self.display_slider.set(digit_level["display"])
+            self.update_display_label(digit_level["display"])
+            self.reset_game()
+            return
         config = self._difficulty_config()
         display_time = max(config["display"], 5.0) if self.is_practice_mode() else config["display"]
         recall_time = max(config["recall"], 15.0) if self.is_practice_mode() else config["recall"]
@@ -1150,6 +1356,27 @@ class MemoryApp(ctk.CTk):
         accuracy = int((self.correct_count / total_rounds) * 100) if total_rounds else 0
         hearts = " ".join("❤️" for _ in range(max(0, self.lives))) or "None 💔"
 
+        if self.is_digit_track_mode():
+            self.digit_track_frame.grid()
+            track = self._digit_track_data()
+            level_id = self._digit_track_level_id()
+            level = get_digit_level(level_id)
+            stats = track.get("levels", {}).get(str(level_id), {})
+            recent = stats.get("recent", [])
+            recent_accuracy = int(sum(item.get("accuracy", 0) for item in recent) / len(recent)) if recent else 0
+            unlocked_count = len(track.get("unlocked_levels", [1]))
+            self.digit_track_level_label.configure(
+                text=f"{level['icon']} L{level_id}: {level['name']} ({level['digits']} digits)"
+            )
+            self.digit_track_progress_label.configure(
+                text=f"Unlock: {stats.get('correct', 0)}/{UNLOCK_CORRECT_TARGET} correct, {recent_accuracy}% recent"
+            )
+            self.digit_track_best_label.configure(
+                text=f"Best: {stats.get('best_score', 0)} | Unlocked: {unlocked_count}/{len(DIGIT_TRACK_LEVELS)}"
+            )
+        else:
+            self.digit_track_frame.grid_remove()
+
         # Update quest display
         for child in self.quest_frame.winfo_children():
             child.destroy()
@@ -1196,10 +1423,11 @@ class MemoryApp(ctk.CTk):
             self.account_level_label.configure(text=f"Account Level ⭐: {self.account_level} / 100", image="")
 
         img_lvl = self._get_icon_image("📈")
+        level_text = f"Digit Track Level: {self._digit_track_level_id()}" if self.is_digit_track_mode() else f"Session Level: {self.level}"
         if img_lvl:
-            self.level_label.configure(text=f" Session Level: {self.level}", image=img_lvl, compound="left")
+            self.level_label.configure(text=f" {level_text}", image=img_lvl, compound="left")
         else:
-            self.level_label.configure(text=f"Session Level 📈: {self.level}", image="")
+            self.level_label.configure(text=f"{level_text} 📈", image="")
 
         img_hearts = self._get_icon_image("💖")
         if img_hearts:
@@ -1276,6 +1504,78 @@ class MemoryApp(ctk.CTk):
             print(f"Screenshot saved to: {filename}")
         except Exception as e:
             print(f"Failed to capture screenshot: {e}")
+
+    def _keypad_layout_for_mode(self):
+        mode = self.mode_var.get()
+        if mode == "Words":
+            return [
+                ["A", "B", "C", "D", "E", "F"],
+                ["G", "H", "I", "J", "K", "L"],
+                ["M", "N", "O", "P", "Q", "R"],
+                ["S", "T", "U", "V", "W", "X"],
+                ["Y", "Z", "Space", "⌫", "Clr"],
+            ]
+        if mode == "Phone" or self.is_digit_track_mode():
+            return [
+                ["1", "2", "3"],
+                ["4", "5", "6"],
+                ["7", "8", "9"],
+                ["⌫", "0", "Clr"],
+            ]
+        if mode == "Numbers":
+            return [
+                ["1", "2", "3"],
+                ["4", "5", "6"],
+                ["7", "8", "9"],
+                ["⌫", "0", "Clr"],
+            ]
+        return [
+            ["1", "2", "3", "A"],
+            ["4", "5", "6", "B"],
+            ["7", "8", "9", "C"],
+            ["D", "E", "F", ","],
+            ["Space", "0", "⌫", "Clr"],
+        ]
+
+    def _keypad_button_style(self, key):
+        if key == "⌫":
+            return ("#fee2e2", "#7f1d1d"), ("#b91c1c", "#fecaca"), ("#fca5a5", "#991b1b")
+        if key == "Clr":
+            return ("#fef3c7", "#78350f"), ("#b45309", "#fef3c7"), ("#fde68a", "#92400e")
+        if key in ("Space", ","):
+            return ("#dbeafe", "#1e3a8a"), ("#1d4ed8", "#dbeafe"), ("#bfdbfe", "#1e40af")
+        if key.isalpha():
+            return ("#ecfdf5", "#064e3b"), ("#047857", "#d1fae5"), ("#d1fae5", "#065f46")
+        return ("#f1f5f9", "#334155"), ("#334155", "#f8fafc"), ("#e2e8f0", "#475569")
+
+    def _rebuild_keypad(self):
+        if not hasattr(self, "keypad_frame"):
+            return
+        for child in self.keypad_frame.winfo_children():
+            child.destroy()
+        self.keypad_buttons = []
+        layout = self._keypad_layout_for_mode()
+        max_cols = max(len(row) for row in layout)
+        compact = max_cols > 4
+        for r_idx, row_keys in enumerate(layout):
+            for c_idx, key in enumerate(row_keys):
+                fg, txt_c, hov = self._keypad_button_style(key)
+                width = 50 if compact and key not in ("Space", "Clr") else 72 if key in ("Space", "Clr") else 65
+                btn = ctk.CTkButton(
+                    self.keypad_frame,
+                    text=key,
+                    width=width,
+                    height=38 if compact else 40,
+                    corner_radius=8,
+                    font=ctk.CTkFont(size=14 if compact else 15, weight="bold"),
+                    fg_color=fg,
+                    text_color=txt_c,
+                    hover_color=hov,
+                    command=lambda k=key: self._on_keypad_click(k),
+                )
+                btn.grid(row=r_idx, column=c_idx, padx=3 if compact else 4, pady=3 if compact else 4)
+                self.keypad_buttons.append(btn)
+        self._update_keypad_state()
 
     def _on_keypad_click(self, key):
         if self.game_state != "waiting":

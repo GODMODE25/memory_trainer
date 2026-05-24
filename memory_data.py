@@ -6,6 +6,7 @@ WINDOW_SIZE = "1120x720"
 SAVE_FILE = os.path.join(os.path.dirname(__file__), "memory_save.json")
 SESSION_TYPES = ["Game", "Practice"]
 GAME_MODES = ["Numbers", "Phone", "Alphanumeric", "Words", "Sequence"]
+PLAY_STYLES = ["Classic", "Digit Track"]
 TECHNIQUES = ["Auto Coach", "Chunking", "Story Link", "Memory Palace", "Sound/Rhythm"]
 HEADER_COLOR = "#3b82f6"
 SUBHEADER_COLOR = "#22c55e"
@@ -67,4 +68,9 @@ ACHIEVEMENTS = [
     {"id": "score_1000", "name": "Four Digits", "description": "Score 1000 points.", "icon": "💎", "predicate": "score>=1000"},
     {"id": "level_10", "name": "Climber", "description": "Reach level 10.", "icon": "🧗", "predicate": "level>=10"},
     {"id": "insane_perfect", "name": "Steel Nerves", "description": "Get an Insane round right without hints.", "icon": "🦾", "predicate": "perfect_round_insane"},
+    {"id": "digit_level_1", "name": "Track Starter", "description": "Clear the first Digit Track level.", "icon": "🎯", "predicate": "digit_level>=1"},
+    {"id": "digit_level_5", "name": "Five Rungs", "description": "Clear five Digit Track levels.", "icon": "📈", "predicate": "digit_level>=5"},
+    {"id": "digit_perfect_10", "name": "Ten Clean", "description": "Perfectly recall a 10+ digit challenge.", "icon": "🏆", "predicate": "perfect_digits>=10"},
+    {"id": "digit_speed", "name": "Quick Capture", "description": "Perfectly recall a Digit Track round with at least 40% recall time left.", "icon": "🚀", "predicate": "digit_speed"},
+    {"id": "digit_all_levels", "name": "Ultimate Champion", "description": "Clear all 13 Digit Track levels.", "icon": "🏅", "predicate": "digit_level>=13"},
 ]

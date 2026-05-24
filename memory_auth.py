@@ -24,6 +24,7 @@ class AuthWindow(ctk.CTkToplevel):
         
         self.username_entry = ctk.CTkEntry(self, placeholder_text="Username", width=200)
         self.username_entry.pack(pady=10)
+        self.username_entry.bind("<Return>", lambda _event: self.attempt_login())
         
         self.error_label = ctk.CTkLabel(self, text="", text_color="#ff5555")
         self.error_label.pack(pady=5)
@@ -34,8 +35,11 @@ class AuthWindow(ctk.CTkToplevel):
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(pady=20)
         
-        ctk.CTkButton(btn_frame, text="Login", command=self.attempt_login, width=90).pack(side="left", padx=5)
+        self.login_button = ctk.CTkButton(btn_frame, text="Login", command=self.attempt_login, width=90)
+        self.login_button.pack(side="left", padx=5)
         ctk.CTkButton(btn_frame, text="Register", command=self.attempt_register, width=90).pack(side="left", padx=5)
+
+        self.after(100, self.username_entry.focus_set)
         
     def attempt_login(self):
         user = self.username_entry.get().strip()

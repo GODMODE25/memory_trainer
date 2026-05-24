@@ -25,6 +25,11 @@ class AchievementsWindow(ctk.CTkToplevel):
             "score_1000": "#38bdf8",
             "level_10": "#a78bfa",
             "insane_perfect": "#34d399",
+            "digit_level_1": "#38bdf8",
+            "digit_level_5": "#22c55e",
+            "digit_perfect_10": "#fbbf24",
+            "digit_speed": "#f97316",
+            "digit_all_levels": "#a78bfa",
         }
         for achievement in ACHIEVEMENTS:
             is_unlocked = achievement["id"] in self.unlocked
