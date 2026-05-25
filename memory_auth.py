@@ -9,6 +9,9 @@ class AuthWindow(ctk.CTkToplevel):
         self.parent = parent
         self.on_success = on_success_callback
         
+        # Fix CTkToplevel double-window bug: hide immediately, show after build
+        self.withdraw()
+        
         self.title("Login / Register")
         self.geometry("350x300")
         self.resizable(False, False)
@@ -40,6 +43,8 @@ class AuthWindow(ctk.CTkToplevel):
         ctk.CTkButton(btn_frame, text="Register", command=self.attempt_register, width=90).pack(side="left", padx=5)
 
         self.after(100, self.username_entry.focus_set)
+        # Show window after build is complete (avoids phantom double-window)
+        self.after(50, self.deiconify)
         
     def attempt_login(self):
         user = self.username_entry.get().strip()
