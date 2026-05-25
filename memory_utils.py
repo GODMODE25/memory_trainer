@@ -3,9 +3,15 @@ import json
 import urllib.request
 import customtkinter as ctk
 from PIL import Image
+import sys
 from memory_levels import default_digit_track, merge_digit_track
 
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
+def get_app_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+CONFIG_FILE = os.path.join(get_app_dir(), "config.json")
 
 
 def load_config():
@@ -27,7 +33,7 @@ def save_config(config):
 
 
 def get_save_path(username="DefaultUser"):
-    base_dir = os.path.dirname(__file__)
+    base_dir = get_app_dir()
     saves_dir = os.path.join(base_dir, "saves")
     os.makedirs(saves_dir, exist_ok=True)
     new_path = os.path.join(saves_dir, f"memory_save_{username}.json")
@@ -107,7 +113,7 @@ def save_save(data, username="DefaultUser"):
 def get_emoji_image(emoji_char, size=(20, 20)):
     try:
         codepoint = "-".join(f"{ord(c):x}" for c in emoji_char)
-        base_dir = os.path.dirname(__file__)
+        base_dir = get_app_dir()
         assets_dir = os.path.join(base_dir, "assets")
         os.makedirs(assets_dir, exist_ok=True)
         img_path = os.path.join(assets_dir, f"{codepoint}.png")
